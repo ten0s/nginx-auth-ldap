@@ -2526,7 +2526,7 @@ ngx_http_auth_ldap_authenticate(ngx_http_request_t *r, ngx_http_auth_ldap_ctx_t 
             ngx_queue_remove(&ctx->queue);
         }
 
-        return NGX_ERROR;
+        return ngx_http_auth_ldap_set_realm(r, &conf->realm);
     }
 
     /*
