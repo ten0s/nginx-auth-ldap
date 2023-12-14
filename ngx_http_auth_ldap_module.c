@@ -2415,7 +2415,7 @@ ngx_http_auth_ldap_init_connections(ngx_cycle_t *cycle)
 /*** Per-request authentication processing ***/
 
 /**
- * Respond with "403 Forbidden" and add correct headers
+ * Respond with "401 Unauthorized" and add correct headers
  */
 static ngx_int_t
 ngx_http_auth_ldap_set_realm(ngx_http_request_t *r, ngx_str_t *realm)
