@@ -125,7 +125,7 @@ typedef struct {
     ngx_queue_t free_connections;  /* Queue of free (ready) connections */
     ngx_queue_t waiting_requests;  /* Queue of ctx with not finished requests */
 
-    ngx_queue_t pending_reconnections;  /* Queue of pending connections (waiting re-connect) */ 
+    ngx_queue_t pending_reconnections;  /* Queue of pending connections (waiting re-connect) */
     char **attrs;  /* Search attributes formated for ldap_search_ext() */
     ngx_str_t attribute_header_prefix;
 } ngx_http_auth_ldap_server_t;
@@ -473,7 +473,7 @@ ngx_http_auth_ldap_ldap_server_block(ngx_conf_t *cf, ngx_command_t *cmd, void *c
         return NGX_CONF_ERROR;
     }
 
-    if (cnf->servers == NULL) {  
+    if (cnf->servers == NULL) {
         if (cnf->servers_size == NGX_CONF_UNSET) {
             cnf->servers_size = NGX_HTTP_AUTH_LDAP_MAX_SERVERS_SIZE;
         }
@@ -1160,7 +1160,7 @@ ngx_http_auth_ldap_init_cache(ngx_cycle_t *cycle)
         }
     }
 
-    
+
     cache->expiration_time = conf->cache_expiration_time;
     cache->num_buckets = count;
     cache->elts_per_bucket = 8;
@@ -1863,7 +1863,7 @@ ngx_http_auth_ldap_read_handler(ngx_event_t *rev)
     c = conn->data;
 
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, rev->log, 0, "ngx_http_auth_ldap_read_handler: Cnx[%d]", c->cnx_idx);
-    
+
     if (c->ld == NULL) {
         ngx_log_error(NGX_LOG_ERR, rev->log, 0, "ngx_http_auth_ldap_read_handler: Cnx[%d] No LDAP", c->cnx_idx);
         ngx_http_auth_ldap_close_connection(c, 0);
@@ -1886,7 +1886,7 @@ ngx_http_auth_ldap_read_handler(ngx_event_t *rev)
             ngx_log_error(NGX_LOG_ERR, c->log, 0, "ngx_http_auth_ldap_read_handler: Cnx[%d] ldap_result() failed (%d: %s)",
                 c->cnx_idx, rc, ldap_err2string(rc));
             int reconnect_asap = 0;
-            
+
             // if LDAP_SERVER_DOWN (usually timeouts or server disconnects)
             if (rc == LDAP_SERVER_DOWN) {
                 if (c->server->max_down_retries_count < c->server->max_down_retries) {
@@ -1980,7 +1980,7 @@ ngx_http_auth_ldap_read_handler(ngx_event_t *rev)
                     /* Iterate through each attribute in the entry. */
                     BerElement *ber = NULL;
                     char *attr = NULL;
-                    struct berval **vals = NULL;     
+                    struct berval **vals = NULL;
                     for (attr = ldap_first_attribute(c->ld, result, &ber);
                          attr != NULL;
                          attr = ldap_next_attribute(c->ld, result, ber)) {
@@ -2048,7 +2048,7 @@ ngx_http_auth_ldap_connect(ngx_http_auth_ldap_connection_t *c)
 
     // Clear an free any previous addrs from parsed_url, so that we can resolve again the LDAP server hostname
     my_free_addrs_from_url(c->main_cnf->cnf_pool, &c->server->parsed_url);
-    
+
     c->server->parsed_url.no_resolve = 0; // Try to resolve this time
     if (ngx_parse_url(c->pool, &c->server->parsed_url) != NGX_OK) {
         ngx_log_error(NGX_LOG_WARN, c->log, 0,
@@ -2108,7 +2108,7 @@ ngx_http_auth_ldap_connect_continue(ngx_http_auth_ldap_connection_t *c)
                 "ngx_http_auth_ldap_connect_continue: Cnx[%d] No addr for server", c->cnx_idx);
         return;
     }
-    
+
     addr = &c->server->parsed_url.addrs[ngx_random() % c->server->parsed_url.naddrs];
 
     ngx_log_debug2(NGX_LOG_DEBUG_HTTP, c->log, 0,
@@ -2159,7 +2159,7 @@ ngx_http_auth_ldap_reconnect_handler(ngx_event_t *ev)
 {
     ngx_connection_t *conn = ev->data;
     ngx_http_auth_ldap_connection_t *c = conn->data;
-    
+
     ngx_log_debug3(NGX_LOG_DEBUG_HTTP, ev->log, 0,
         "ngx_http_auth_ldap_reconnect_handler: ev=0x%p, conn=0x%p, c=0x%p", ev, conn, c);
 
