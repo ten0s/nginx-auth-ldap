@@ -143,7 +143,7 @@ when authentication failed or is missing.
 * Default: --
 * Context: http, server, loc, limit_expect
 
-Send LDAP bind request using `binddn`/`binddn_passwd` credentials, if available.
+Send LDAP bind request with `binddn`/`binddn_passwd` credentials, if available.
 Return 200 if bind is successful, 503 otherwise.
 
 ### auth_ldap_servers
