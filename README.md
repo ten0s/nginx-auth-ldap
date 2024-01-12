@@ -39,7 +39,7 @@ Check HTTP_AUTH_LDAP options
 ### Linux
 
 ```bash
-cd ~ && git clone https://github.com/Ericbla/nginx-auth-ldap.git   
+cd ~ && git clone https://github.com/Ericbla/nginx-auth-ldap.git
 ```
 
 in nginx source folder
@@ -134,7 +134,17 @@ Maximum number of `ldap_server` elements to support
 * Default: --
 * Context: http, server, loc, limit_expect
 
-Set the _realm_ to be used with the `WWW-Authenticate` response header when authentication failed or is missing.
+Set the _realm_ to be used with the `WWW-Authenticate` response header
+when authentication failed or is missing.
+
+### ldap_health
+
+* Syntax: ldap_health;
+* Default: --
+* Context: http, server, loc, limit_expect
+
+Send LDAP bind request using `binddn`/`binddn_passwd` credentials, if available.
+Return 200 if bind is successful, 503 otherwise.
 
 ### auth_ldap_servers
 
@@ -228,7 +238,7 @@ Tell to search for full DN in member object.
 
 Retry count for attempting to reconnect to an LDAP server if it is considered
 "DOWN".  This may happen if a KEEP-ALIVE connection to an LDAP server times
-out or is terminated by the server end after some amount of time.  
+out or is terminated by the server end after some amount of time.
 
 This can usually help with the following error:
 

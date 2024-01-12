@@ -144,11 +144,23 @@ typedef struct {
     ngx_pool_t *cnf_pool;
 } ngx_http_auth_ldap_main_conf_t;
 
+typedef enum {
+    NONE,
+    AUTH,
+    HEALTH
+} ngx_http_auth_ldap_request_type_t;
+
 typedef struct {
-    ngx_str_t realm;
+    ngx_http_auth_ldap_request_type_t type;
+    union {
+        struct {
+            ngx_str_t realm;
+        } auth;
+        struct {
+        } health;
+    };
     ngx_array_t *servers;       /* array of ngx_http_auth_ldap_server_t* */
 } ngx_http_auth_ldap_loc_conf_t;
-
 
 typedef struct {
     ngx_str_t attr_name;
@@ -183,6 +195,7 @@ typedef enum {
 
 typedef struct {
     ngx_http_request_t *r;
+    ngx_http_auth_ldap_request_type_t type;
     ngx_uint_t server_index;
     ngx_http_auth_ldap_server_t *server;
     ngx_http_auth_ldap_request_phase_t phase;
@@ -240,6 +253,7 @@ typedef struct ngx_http_auth_ldap_connection {
 static char * ngx_http_auth_ldap_ldap_server_block(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static char * ngx_http_auth_ldap_ldap_server(ngx_conf_t *cf, ngx_command_t *dummy, void *conf);
 static char * ngx_http_auth_ldap(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
+static char * ngx_http_auth_ldap_health(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static char * ngx_http_auth_ldap_servers(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static char * ngx_http_auth_ldap_resolver(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static char * ngx_http_auth_ldap_parse_url(ngx_conf_t *cf, ngx_http_auth_ldap_server_t *server);
@@ -343,6 +357,14 @@ static ngx_command_t ngx_http_auth_ldap_commands[] = {
         ngx_string("auth_ldap"),
         NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_HTTP_LMT_CONF | NGX_CONF_TAKE1,
         ngx_http_auth_ldap,
+        NGX_HTTP_LOC_CONF_OFFSET,
+        0,
+        NULL
+    },
+    {
+        ngx_string("ldap_health"),
+        NGX_HTTP_LOC_CONF | NGX_CONF_NOARGS,
+        ngx_http_auth_ldap_health,
         NGX_HTTP_LOC_CONF_OFFSET,
         0,
         NULL
@@ -632,20 +654,44 @@ ngx_http_auth_ldap(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
     ngx_http_auth_ldap_loc_conf_t *cnf = conf;
     u_char *p;
 
-    if (ngx_strcmp(value[1].data, "off") == 0) {
-        ngx_str_set(&cnf->realm, "");
-        return NGX_CONF_OK;
-    }
-
-    cnf->realm.len = sizeof("Basic realm=\"") - 1 + value[1].len + 1;
-    cnf->realm.data = ngx_pcalloc(cf->pool, cnf->realm.len);
-    if (cnf->realm.data == NULL) {
+    if (cnf->type == HEALTH) {
+        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "http_auth_ldap: \"ldap_health\" already defined"); \
         return NGX_CONF_ERROR;
     }
 
-    p = ngx_cpymem(cnf->realm.data, "Basic realm=\"", sizeof("Basic realm=\"") - 1);
+    if (ngx_strcmp(value[1].data, "off") == 0) {
+        ngx_str_set(&cnf->auth.realm, "");
+        return NGX_CONF_OK;
+    }
+
+    cnf->type = AUTH;
+    cnf->auth.realm.len = sizeof("Basic realm=\"") - 1 + value[1].len + 1;
+    cnf->auth.realm.data = ngx_pcalloc(cf->pool, cnf->auth.realm.len);
+    if (cnf->auth.realm.data == NULL) {
+        return NGX_CONF_ERROR;
+    }
+
+    p = ngx_cpymem(cnf->auth.realm.data, "Basic realm=\"", sizeof("Basic realm=\"") - 1);
     p = ngx_cpymem(p, value[1].data, value[1].len);
     *p = '"';
+
+    return NGX_CONF_OK;
+}
+
+/**
+ * Parse ldap_health directive
+ */
+static char *
+ngx_http_auth_ldap_health(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
+{
+    ngx_http_auth_ldap_loc_conf_t *cnf = conf;
+
+    if (cnf->type == AUTH) {
+        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "http_auth_ldap: \"auth_ldap\" already defined"); \
+        return NGX_CONF_ERROR;
+    }
+
+    cnf->type = HEALTH;
 
     return NGX_CONF_OK;
 }
@@ -790,10 +836,13 @@ ngx_http_auth_ldap_parse_url(ngx_conf_t *cf, ngx_http_auth_ldap_server_t *server
         return NGX_CONF_ERROR;
     }
 
-    if (server->ludpp->lud_attrs == NULL) {
-        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "http_auth_ldap: No user attribute specified in auth_ldap_url.");
-        return NGX_CONF_ERROR;
-    }
+    // It prevents having simple URL ldap://hostport/ for HEALTH.
+    // Wrong attrs is handled by the LDAP_URL_ERR_BADATTRS error above anyway.
+    // If not attrs is given, then default to "uid", see ngx_http_auth_ldap_search.
+    //if (server->ludpp->lud_attrs == NULL) {
+    //    ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "http_auth_ldap: No user attribute specified in auth_ldap_url.");
+    //    return NGX_CONF_ERROR;
+    //}
 
     server->url.data = ngx_palloc(cf->pool, ngx_strlen(server->ludpp->lud_scheme) + sizeof("://") - 1 +
         ngx_strlen(server->ludpp->lud_host) + sizeof(":65535"));
@@ -1072,8 +1121,8 @@ ngx_http_auth_ldap_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
     ngx_http_auth_ldap_loc_conf_t *prev = parent;
     ngx_http_auth_ldap_loc_conf_t *conf = child;
 
-    if (conf->realm.data == NULL) {
-        conf->realm = prev->realm;
+    if (conf->auth.realm.data == NULL) {
+        conf->auth.realm = prev->auth.realm;
     }
     ngx_conf_merge_ptr_value(conf->servers, prev->servers, NULL);
 
@@ -1598,6 +1647,7 @@ ngx_http_auth_ldap_connection_established(ngx_http_auth_ldap_connection_t *c)
     ngx_connection_t *conn;
     Sockbuf *sb;
     ngx_int_t rc;
+    const char *dn;
     struct berval cred;
 
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, c->log, 0, "ngx_http_auth_ldap_connection_established: Cnx[%d] established", c->cnx_idx);
@@ -1642,9 +1692,11 @@ ngx_http_auth_ldap_connection_established(ngx_http_auth_ldap_connection_t *c)
 
     /* Perform initial bind to the server */
 
+    dn = (const char *) c->server->bind_dn.data;
     cred.bv_val = (char *) c->server->bind_dn_passwd.data;
     cred.bv_len = c->server->bind_dn_passwd.len;
-    rc = ldap_sasl_bind(c->ld, (const char *) c->server->bind_dn.data, LDAP_SASL_SIMPLE, &cred, NULL, NULL, &c->msgid);
+
+    rc = ldap_sasl_bind(c->ld, dn, LDAP_SASL_SIMPLE, &cred, NULL, NULL, &c->msgid);
     if (rc != LDAP_SUCCESS) {
         ngx_log_error(NGX_LOG_ERR, c->log, 0,
             "ngx_http_auth_ldap_connection_established: [%d] initial ldap_sasl_bind() failed (%d: %s)",
@@ -2447,7 +2499,8 @@ ngx_http_auth_ldap_handler(ngx_http_request_t *r)
     int rc;
 
     alcf = ngx_http_get_module_loc_conf(r, ngx_http_auth_ldap_module);
-    if (alcf->realm.len == 0) {
+
+    if (alcf->type == NONE) {
         return NGX_DECLINED;
     }
 
@@ -2455,25 +2508,32 @@ ngx_http_auth_ldap_handler(ngx_http_request_t *r)
         /* No LDAP servers for the location. */
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "http_auth_ldap: \"auth_ldap\" requires "
                       "one or more \"auth_ldap_servers\" in the same location");
-        return ngx_http_auth_ldap_set_realm(r, &alcf->realm);
+
+        if (alcf->type == AUTH) {
+            return ngx_http_auth_ldap_set_realm(r, &alcf->auth.realm);
+        } else {
+            return NGX_HTTP_SERVICE_UNAVAILABLE;
+        }
     }
 
     ctx = ngx_http_get_module_ctx(r, ngx_http_auth_ldap_module);
     if (ctx == NULL) {
-        rc = ngx_http_auth_basic_user(r);
-        if (rc == NGX_DECLINED) {
-            return ngx_http_auth_ldap_set_realm(r, &alcf->realm);
-        }
-        if (rc == NGX_ERROR) {
-            return NGX_HTTP_INTERNAL_SERVER_ERROR;
-        }
+        if (alcf->type == AUTH) {
+            rc = ngx_http_auth_basic_user(r);
+            if (rc == NGX_DECLINED) {
+                return ngx_http_auth_ldap_set_realm(r, &alcf->auth.realm);
+            }
+            if (rc == NGX_ERROR) {
+                return NGX_HTTP_INTERNAL_SERVER_ERROR;
+            }
 
-        ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "http_auth_ldap: Username is \"%V\"",
-            &r->headers_in.user);
-        if (r->headers_in.passwd.len == 0)
-        {
-            ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "http_auth_ldap: Password is empty");
-            return ngx_http_auth_ldap_set_realm(r, &alcf->realm);
+            ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "http_auth_ldap: Username is \"%V\"",
+                           &r->headers_in.user);
+            if (r->headers_in.passwd.len == 0)
+            {
+                ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "http_auth_ldap: Password is empty");
+                return ngx_http_auth_ldap_set_realm(r, &alcf->auth.realm);
+            }
         }
 
         ctx = ngx_pcalloc(r->pool, sizeof(ngx_http_auth_ldap_ctx_t));
@@ -2481,6 +2541,7 @@ ngx_http_auth_ldap_handler(ngx_http_request_t *r)
             return NGX_HTTP_INTERNAL_SERVER_ERROR;
         }
         ctx->r = r;
+        ctx->type = alcf->type;
 
         /* Initialize the attributes array */
         ngx_array_init(&ctx->attributes, r->pool, DEFAULT_ATTRS_COUNT, sizeof(ldap_search_attribute_t));
@@ -2526,8 +2587,6 @@ ngx_http_auth_ldap_authenticate(ngx_http_request_t *r, ngx_http_auth_ldap_ctx_t 
             ngx_queue_remove(&ctx->queue);
         }
 
-        // Instead of questionable 401, better return 503
-        // ngx_http_auth_ldap_set_realm(r, &conf->realm);
         return NGX_HTTP_SERVICE_UNAVAILABLE;
     }
 
@@ -2582,7 +2641,7 @@ ngx_http_auth_ldap_authenticate(ngx_http_request_t *r, ngx_http_auth_ldap_ctx_t 
                     break;
                 }
 
-                ctx->phase = PHASE_SEARCH;
+                ctx->phase = ctx->type == AUTH ? PHASE_SEARCH : PHASE_CHECK_BIND;
                 ctx->iteration = 0;
                 break;
 
@@ -2677,7 +2736,7 @@ ngx_http_auth_ldap_authenticate(ngx_http_request_t *r, ngx_http_auth_ldap_ctx_t 
                 }
 
                 /* All steps done, finish the processing */
-                ctx->phase = PHASE_REBIND;
+                ctx->phase = ctx->type == AUTH ? PHASE_REBIND : PHASE_NEXT;
                 ctx->iteration = 0;
                 break;
 
@@ -2730,7 +2789,11 @@ ngx_http_auth_ldap_authenticate(ngx_http_request_t *r, ngx_http_auth_ldap_ctx_t 
 
                 ctx->server_index++;
                 if (ctx->server_index >= conf->servers->nelts) {
-                    return ngx_http_auth_ldap_set_realm(r, &conf->realm);
+                    if (ctx->type == AUTH) {
+                        return ngx_http_auth_ldap_set_realm(r, &conf->auth.realm);
+                    } else {
+                        return NGX_HTTP_SERVICE_UNAVAILABLE;
+                    }
                 }
 
                 ctx->phase = PHASE_START;
@@ -2753,13 +2816,12 @@ ngx_http_auth_ldap_search(ngx_http_request_t *r, ngx_http_auth_ldap_ctx_t *ctx)
         }
 
         ludpp = ctx->server->ludpp;
-        filter = ngx_pcalloc(
-            r->pool,
-            (ludpp->lud_filter != NULL ? ngx_strlen(ludpp->lud_filter) : ngx_strlen("(objectClass=*)")) +
-            ngx_strlen("(&(=))") + ngx_strlen(ludpp->lud_attrs[0]) + r->headers_in.user.len + 1);
-        ngx_sprintf(filter, "(&%s(%s=%V))%Z",
-                ludpp->lud_filter != NULL ? ludpp->lud_filter : "(objectClass=*)",
-                ludpp->lud_attrs[0], &r->headers_in.user);
+        const char *lud_filter = ludpp->lud_filter != NULL ? ludpp->lud_filter : "(objectClass=*)";
+        // If not attrs is given, then default to "uid".
+        const char *lud_attr = ludpp->lud_attrs != NULL ? ludpp->lud_attrs[0] : "uid";
+        filter = ngx_pcalloc(r->pool,
+                             ngx_strlen(lud_filter) + ngx_strlen("(&(=))") + ngx_strlen(lud_attr) + r->headers_in.user.len + 1);
+        ngx_sprintf(filter, "(&%s(%s=%V))%Z", lud_filter, lud_attr, &r->headers_in.user);
         ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "ngx_http_auth_ldap_search: Search filter is \"%s\"",
             (const char *) filter);
 
@@ -2957,6 +3019,7 @@ ngx_http_auth_ldap_check_group(ngx_http_request_t *r, ngx_http_auth_ldap_ctx_t *
 static ngx_int_t
 ngx_http_auth_ldap_check_bind(ngx_http_request_t *r, ngx_http_auth_ldap_ctx_t *ctx)
 {
+    const char *dn;
     struct berval cred;
     ngx_int_t rc;
 
@@ -2966,9 +3029,17 @@ ngx_http_auth_ldap_check_bind(ngx_http_request_t *r, ngx_http_auth_ldap_ctx_t *c
             return NGX_AGAIN;
         }
 
-        cred.bv_val = (char *) r->headers_in.passwd.data;
-        cred.bv_len = r->headers_in.passwd.len;
-        rc = ldap_sasl_bind(ctx->c->ld, (const char *) ctx->user_dn.data, LDAP_SASL_SIMPLE, &cred, NULL, NULL, &ctx->c->msgid);
+        if (ctx->type == AUTH) {
+            dn = (const char *) ctx->user_dn.data;
+            cred.bv_val = (char *) r->headers_in.passwd.data;
+            cred.bv_len = r->headers_in.passwd.len;
+        } else {
+            dn = (const char *) ctx->server->bind_dn.data;
+            cred.bv_val = (char *) ctx->server->bind_dn_passwd.data;
+            cred.bv_len = ctx->server->bind_dn_passwd.len;
+        }
+
+        rc = ldap_sasl_bind(ctx->c->ld, dn, LDAP_SASL_SIMPLE, &cred, NULL, NULL, &ctx->c->msgid);
         if (rc != LDAP_SUCCESS) {
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_auth_ldap_check_bind: Cnx[%d] ldap_sasl_bind() failed (%d: %s)",
                 ctx->c->cnx_idx, rc, ldap_err2string(rc));
@@ -3000,6 +3071,7 @@ ngx_http_auth_ldap_check_bind(ngx_http_request_t *r, ngx_http_auth_ldap_ctx_t *c
 static ngx_int_t
 ngx_http_auth_ldap_recover_bind(ngx_http_request_t *r, ngx_http_auth_ldap_ctx_t *ctx)
 {
+    const char *dn;
     struct berval cred;
     ngx_int_t rc;
 
@@ -3010,9 +3082,12 @@ ngx_http_auth_ldap_recover_bind(ngx_http_request_t *r, ngx_http_auth_ldap_ctx_t 
         }
 
         ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "ngx_http_auth_ldap_recover_bind: Rebinding to binddn");
+
+        dn = (const char *) ctx->server->bind_dn.data;
         cred.bv_val = (char *) ctx->server->bind_dn_passwd.data;
         cred.bv_len = ctx->server->bind_dn_passwd.len;
-        rc = ldap_sasl_bind(ctx->c->ld, (const char *) ctx->server->bind_dn.data, LDAP_SASL_SIMPLE, &cred, NULL, NULL, &ctx->c->msgid);
+
+        rc = ldap_sasl_bind(ctx->c->ld, dn, LDAP_SASL_SIMPLE, &cred, NULL, NULL, &ctx->c->msgid);
         if (rc != LDAP_SUCCESS) {
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_auth_ldap_recover_bind: Cnx[%d] ldap_sasl_bind() failed (%d: %s)",
                 ctx->c->cnx_idx, rc, ldap_err2string(rc));
